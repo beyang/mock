@@ -12,7 +12,6 @@
         sys.path.append(os.getcwd())
 
     from mock import Mock, sentinel, patch
-    import unittest
     import unittest2
 
     class SomeClass(object):
@@ -23,6 +22,11 @@
     sys.modules['package'] = package = Mock(name='package')
     sys.modules['package.module'] = package.module
 
+    class TestCase(unittest2.TestCase):
+        def run(self):
+            result = unittest2.TestResult()
+            super(unittest2.TestCase, self).run(result)
+            assert result.wasSuccessful()
 
 The patch decorators are used for patching objects only within the scope of
 the function they decorate. They automatically handle the unpatching for you,
@@ -184,7 +188,7 @@ method of a `TestCase`:
 
 .. doctest::
 
-    >>> class MyTest(unittest.TestCase):
+    >>> class MyTest(TestCase):
     ...     def setUp(self):
     ...         self.patcher1 = patch('package.module.Class1')
     ...         self.patcher2 = patch('package.module.Class2')
@@ -211,7 +215,7 @@ method of a `TestCase`:
 
     .. doctest::
 
-        >>> class MyTest(unittest2.TestCase):
+        >>> class MyTest(TestCase):
         ...     def setUp(self):
         ...         patcher = patch('package.module.Class')
         ...         self.MockClass = patcher.start()

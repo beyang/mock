@@ -6,7 +6,7 @@
 
 .. testsetup::
 
-    import sys, unittest, unittest2
+    import sys, unittest2
     from mock import MagicMock, Mock, patch
     from datetime import date
 
@@ -21,6 +21,14 @@
     mymodule.frob = lambda val: val
     mymodule.grob = grob
     mymodule.date = date
+
+    class TestCase(unittest2.TestCase):
+        def run(self):
+            result = unittest2.TestResult()
+            out = unittest2.TestCase.run(self, result)
+            assert result.wasSuccessful()
+            return out
+
 
 Here are some more examples for some slightly more advanced scenarios than in
 the :ref:`getting started <getting-started>` guide.
@@ -222,7 +230,7 @@ with `test`:
 .. doctest::
 
     >>> @patch('mymodule.SomeClass')
-    ... class MyTest(unittest.TestCase):
+    ... class MyTest(TestCase):
     ...
     ...     def test_one(self, MockSomeClass):
     ...         self.assertTrue(mymodule.SomeClass is MockSomeClass)
@@ -233,8 +241,8 @@ with `test`:
     ...     def not_a_test(self):
     ...         return 'something'
     ...
-    >>> MyTest('test_one').run()
-    >>> MyTest('test_two').run()
+    >>> MyTest('test_one').test_one()
+    >>> MyTest('test_two').test_two()
     >>> MyTest('test_two').not_a_test()
     'something'
 
@@ -244,7 +252,7 @@ you to move the patching into your `setUp` and `tearDown` methods.
 
 .. doctest::
 
-    >>> class MyTest(unittest.TestCase):
+    >>> class MyTest(TestCase):
     ...     def setUp(self):
     ...         self.patcher = patch('mymodule.foo')
     ...         self.mock_foo = self.patcher.start()
@@ -265,7 +273,7 @@ exception is raised in the setUp then tearDown is not called. `unittest2
 
 .. doctest::
 
-    >>> class MyTest(unittest2.TestCase):
+    >>> class MyTest(TestCase):
     ...     def setUp(self):
     ...         patcher = patch('mymodule.foo')
     ...         self.addCleanup(patcher.stop)
@@ -583,3 +591,121 @@ return value is an exception, raise it instead of returning it:
 
 Which approach you prefer is a matter of taste. The first approach is actually
 a line shorter but maybe the second approach is more readable.
+
+
+Nesting Patches
+===============
+
+Using patch as a context manager is nice, but if you do multiple patches you
+can end up with nested with statements indenting further and further to the
+right:
+
+.. doctest::
+
+    >>> class MyTest(TestCase):
+    ...
+    ...     def test_foo(self):
+    ...         with patch('mymodule.Foo') as mock_foo:
+    ...             with patch('mymodule.Bar') as mock_bar:
+    ...                 with patch('mymodule.Spam') as mock_spam:
+    ...                     assert mymodule.Foo is mock_foo
+    ...                     assert mymodule.Bar is mock_bar
+    ...                     assert mymodule.Spam is mock_spam
+    ...
+    >>> original = mymodule.Foo
+    >>> MyTest('test_foo').test_foo()
+    >>> assert mymodule.Foo is original
+
+With unittest2_ `cleanup` functions and the patch :ref:`start and stop methods
+<start-and-stop>` we can achieve the same effect without the nested
+indentation. A simple helper method, `create_patch`, puts the patch in place
+and returns the created mock for us:
+
+.. doctest::
+
+    >>> class MyTest(TestCase):
+    ...
+    ...     def create_patch(self, name):
+    ...         patcher = patch(name)
+    ...         thing = patcher.start()
+    ...         self.addCleanup(patcher.stop)
+    ...         return thing
+    ...
+    ...     def test_foo(self):
+    ...         mock_foo = self.create_patch('mymodule.Foo')
+    ...         mock_bar = self.create_patch('mymodule.Bar')
+    ...         mock_spam = self.create_patch('mymodule.Spam')
+    ...
+    ...         assert mymodule.Foo is mock_foo
+    ...         assert mymodule.Bar is mock_bar
+    ...         assert mymodule.Spam is mock_spam
+    ...
+    >>> original = mymodule.Foo
+    >>> MyTest('test_foo').run()
+    >>> assert mymodule.Foo is original
+
+
+
+Mocking a dictionary with MagicMock
+===================================
+
+You may want to mock a dictionary, or other container object, recording all
+access to it whilst having it still behave like a dictionary.
+
+We can do this with :class:`MagicMock`, which will behave like a dictionary,
+and using :data:`Mock.side_effect` to delegate dictionary access to a real underlying
+dictionary that is under our control.
+
+When the `__getitem__` and `__setitem__` methods of our `MagicMock` are called
+(normal dictionary access) then `side_effect` is called with the key (and in
+the case of `__setitem__` the value too). We can also control what is returned.
+
+After the `MagicMock` has been used we can use attributes like
+:data:`Mock.call_args_list` to assert about how the dictionary was used:
+
+.. doctest::
+
+    >>> my_dict = {'a': 1, 'b': 2, 'c': 3}
+    >>> def getitem(name):
+    ...      return my_dict[name]
+    ...
+    >>> def setitem(name, val):
+    ...     my_dict[name] = val
+    ...
+    >>> mock = MagicMock()
+    >>> mock.__getitem__.side_effect = getitem
+    >>> mock.__setitem__.side_effect = setitem
+
+With these side effect functions in place, the `mock` will behave like a normal
+dictionary but recording the access. It even raises a `KeyError` if you try
+to access a key that doesn't exist.
+
+.. doctest::
+
+    >>> mock['a']
+    1
+    >>> mock['c']
+    3
+    >>> mock['d']
+    Traceback (most recent call last):
+      ...
+    KeyError: 'd'
+    >>> mock['b'] = 'fish'
+    >>> mock['d'] = 'eggs'
+    >>> mock['b']
+    'fish'
+    >>> mock['d']
+    'eggs'
+
+After it has been used you can make assertions about the access using the normal
+mock methods and attributes:
+
+.. doctest::
+
+    >>> mock.__getitem__.call_args_list
+    [(('a',), {}), (('c',), {}), (('d',), {}), (('b',), {}), (('d',), {})]
+    >>> mock.__setitem__.call_args_list
+    [(('b', 'fish'), {}), (('d', 'eggs'), {})]
+    >>> my_dict
+    {'a': 1, 'c': 3, 'b': 'fish', 'd': 'eggs'}
+
